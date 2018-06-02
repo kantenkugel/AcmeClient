@@ -15,9 +15,12 @@
 
 package com.kantenkugel.acmeclient;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.kantenkugel.acmeclient.args.ArgParser;
+import com.kantenkugel.acmeclient.args.Args;
+import com.kantenkugel.acmeclient.config.Config;
+import com.kantenkugel.acmeclient.config.SiteConfig;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.shredzone.acme4j.*;
 import org.shredzone.acme4j.exception.AcmeException;
@@ -36,27 +39,20 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-public class Main {
+public class AcmeClient {
 
-    private static final Logger LOG = LoggerFactory.getLogger(Main.class);
+    static final Logger LOG = LoggerFactory.getLogger(AcmeClient.class);
 
     private static final String ACME_ADDRESS = "acme://letsencrypt.org"; // acme://letsencrypt.org/staging for testing
 //    private static final String ACME_ADDRESS = "acme://pebble"; //for local testing with pebble
 
-    // File name of the CSR
-    private static final File SITE_CONFIG_FILE = new File("sites.json");
+    private static final int RENEW_DAYS_LEFT = 10;
 
-    // File name of the signed certificate
-    private static final File DOMAIN_CHAIN_FILE = new File("domain-chain.crt");
+    // File name of the CSR
+    private static final File CONFIG_FILE = new File("config.json");
 
     private static final ObjectMapper MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-    /**
-     * Invokes this example.
-     *
-     * @param args
-     *            Domains to get a certificate for
-     */
     public static void main(String... args) {
         if (args.length == 0) {
             System.err.println("Usage: AcmeClient.jar register|renew");
@@ -84,11 +80,10 @@ public class Main {
         }
     }
 
-    private static List<SiteConfig> getSiteConfigs() {
+    private static Config getConfig() {
         try {
-            return SITE_CONFIG_FILE.exists()
-                    ? MAPPER.readValue(SITE_CONFIG_FILE, new TypeReference<List<SiteConfig>>() {
-            })
+            return CONFIG_FILE.exists()
+                    ? MAPPER.readValue(CONFIG_FILE, Config.class)
                     : null;
         } catch(IOException ex) {
             LOG.error("Error reading the sites file", ex);
@@ -98,102 +93,80 @@ public class Main {
 
     private static void register(String[] args) throws IOException, AcmeException {
         if(args.length == 1) {
-            LOG.info("Usage: AcmeClient.jar register [override] -p /statics/path -d my.domain.com [-d another.domain.com ...] [-p /statics/other -d ...]");
+            LOG.info("Usage: AcmeClient.jar register --override -p /statics/path -d my.domain.com [-d another.domain.com ...] [-p /statics/other -d ...]");
             return;
         }
 
-        List<SiteConfig> siteConfigs = getSiteConfigs();
-        if(siteConfigs != null && !siteConfigs.isEmpty()) {
-            if(!args[1].toLowerCase().equals("override")) {
-                LOG.warn("Detected already existing domain registrations.\n" +
-                        "If you want to just renew them, use the renew mode instead of register.\n" +
-                        "Otherwise execute the program with the argument \"override\" directly following the register argument.\n" +
-                        "Note: this will forget all previously registered domains!");
-                return;
-            }
+        Args parsedArgs = new ArgParser().parse(args);
+
+        Config cfg;
+        if(!parsedArgs.isOverride() && (cfg = getConfig()) != null && !cfg.getSiteConfigs().isEmpty()) {
+            LOG.warn("Detected already existing domain registrations.\n" +
+                    "If you want to just renew them, use the renew mode instead of register.\n" +
+                    "Otherwise execute the program with the argument \"override\" directly following the register argument.\n" +
+                    "Note: this will forget all previously registered domains!");
+            return;
         }
 
-        TokenMode mode = TokenMode.NONE;
-        StringBuilder path = new StringBuilder();
-        File filePath = null;
-        Map<String, SiteConfig> toRegister = new HashMap<>();
-
-        for(int i=1; i < args.length; i++) {
-            if(i==1 && args[1].equalsIgnoreCase("override"))
-                continue;
-            switch(args[i].toLowerCase()) {
-                case "-p":
-                    mode = TokenMode.PATH;
-                    path.setLength(0);
-                    break;
-                case "-d":
-                    mode = TokenMode.DOMAIN;
-                    if(path.length() == 0) {
-                        LOG.error("YOu have to specify a webroot path via -p before adding domains!");
-                        System.exit(1);
-                    }
-                    filePath = new File(path.substring(1));
-                    if(!filePath.exists() || !filePath.isDirectory()) {
-                        LOG.error("File {} does not exist or is not a directory!", filePath.getPath());
-                        System.exit(1);
-                    }
-                    break;
-                default:
-                    switch(mode) {
-                        case NONE:
-                            LOG.error("Invalid syntax. run with only register argument for usage example.");
-                            System.exit(1);
-                            break;
-                        case PATH:
-                            path.append(' ').append(args[i]);
-                            filePath = null;
-                            break;
-                        case DOMAIN:
-                            String domain = args[i].toLowerCase();
-                            toRegister.put(domain, new SiteConfig(domain, filePath, null));
-                            break;
-                    }
-            }
+        if(!parsedArgs.isQuiet()) {
+            StringBuilder sb = new StringBuilder("About to create following certs:\n");
+            Map<File, List<SiteConfig>> webroots = parsedArgs.getSiteConfigs().stream().collect(Collectors.groupingBy(SiteConfig::getStaticsDir));
+            webroots.forEach((key, value) -> {
+                sb.append("Webroot ").append(key.getAbsolutePath()).append('\n');
+                value.forEach(site -> {
+                    sb.append('\t').append(site.getDomain()).append('\n');
+                });
+            });
+            sb.append("Key file: ").append(parsedArgs.getKeyFile().getAbsolutePath())
+                    .append("\nCert file: ").append(parsedArgs.getCertFile().getAbsolutePath());
+            sb.append("\nIs this correct?");
+            if(!Utils.userConfirmation(sb.toString()))
+                return;
         }
 
         KeyPair userKeyPair = Entities.loadOrCreateAccountKeyPair();
 
-        KeyPair domainKeyPair = Entities.loadOrCreateDomainKeyPair();
+        KeyPair domainKeyPair = Entities.loadOrCreateDomainKeyPair(parsedArgs.getKeyFile());
 
-        requestCert(toRegister, userKeyPair, domainKeyPair, false);
+        requestCert(parsedArgs.getConfig(), userKeyPair, domainKeyPair, parsedArgs.isQuiet());
     }
 
     private static void renew() throws IOException, AcmeException {
-        List<SiteConfig> siteConfigs = getSiteConfigs();
-        if(siteConfigs == null || siteConfigs.isEmpty()) {
+        Config cfg = getConfig();
+        if(cfg == null || cfg.getSiteConfigs().isEmpty()) {
             LOG.error("No sites are registered. Can't renew");
             System.exit(1);
         }
 
-        if(siteConfigs.stream().noneMatch(config -> Instant.now().until(config.getExpiry().toInstant(), ChronoUnit.DAYS) < 10)) {
+        if(Instant.now().until(cfg.getExpiry().toInstant(), ChronoUnit.DAYS) > RENEW_DAYS_LEFT) {
             LOG.info("Nothing to renew");
             System.exit(2);
         }
 
-        Map<String, SiteConfig> toRenew = siteConfigs.stream().collect(Collectors.toMap(SiteConfig::getDomain, Function.identity()));
+        if(cfg.getKeyFile() == null || !cfg.getKeyFile().exists())
+            throw new AcmeException("Key file does not exist. Aborting renewal");
 
         KeyPair userKeyPair = Entities.loadAccountKeyPair();
         if(userKeyPair == null)
             throw new AcmeException("No account KeyPair was found. Aborting renewal");
 
-        KeyPair domainKeyPair = Entities.loadDomainKeyPair();
+        KeyPair domainKeyPair = Entities.loadDomainKeyPair(cfg.getKeyFile());
         if(domainKeyPair == null)
             throw new AcmeException("No domain KeyPair found. Aborting renewal");
 
-        requestCert(toRenew, userKeyPair, domainKeyPair, true);
+        requestCert(cfg, userKeyPair, domainKeyPair, true);
     }
 
-    private static void requestCert(Map<String, SiteConfig> requestedDomains, KeyPair userKeyPair,
+    private static void requestCert(Config config, KeyPair userKeyPair,
                                     KeyPair domainKeyPair, boolean skipToS) throws AcmeException, IOException {
+        Map<String, SiteConfig> requestedDomains = config.getSiteConfigs().stream()
+                .collect(Collectors.toMap(SiteConfig::getDomain, Function.identity()));
+
         Session session = new Session(ACME_ADDRESS);
 
         Account acct = Entities.findOrRegisterAccount(session, userKeyPair, skipToS);
 
+        LOG.info("Ordering domains");
         Order order = acct.newOrder().domains(requestedDomains.keySet()).create();
 
         // Perform all required authorizations
@@ -235,26 +208,19 @@ public class Main {
             throw new AcmeException("Could not get certificate");
 
         // Write a combined file containing the certificate and chain.
-        try (FileWriter fw = new FileWriter(DOMAIN_CHAIN_FILE)) {
+        try (FileWriter fw = new FileWriter(config.getCertFile())) {
             certificate.writeCertificate(fw);
         }
 
-        storeSiteConfigs(requestedDomains.values(), certificate);
+        storeSiteConfigs(config, certificate);
 
         LOG.info("Success! The certificate for domains " + requestedDomains.keySet() + " has been generated!");
-        LOG.info("Certificate URL: " + certificate.getLocation());
+        LOG.debug("Certificate URL: " + certificate.getLocation());
     }
 
-    private static void storeSiteConfigs(Collection<SiteConfig> requests, Certificate certificate) throws IOException {
-        List<SiteConfig> configs = new ArrayList<>(requests.size());
-        Date expiry = certificate.getCertificate().getNotAfter();
-        for(SiteConfig request : requests) {
-            configs.add(new SiteConfig(request.getDomain(), request.getStaticsDir(), expiry));
-        }
-        MAPPER.writeValue(SITE_CONFIG_FILE, configs);
-    }
+    private static void storeSiteConfigs(Config requests, Certificate certificate) throws IOException {
+        requests.setExpiry(certificate.getCertificate().getNotAfter());
 
-    private enum TokenMode {
-        NONE, PATH, DOMAIN
+        MAPPER.writeValue(CONFIG_FILE, requests);
     }
 }

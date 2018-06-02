@@ -3,7 +3,8 @@
  *   http://acme4j.shredzone.org
  *
  * Copyright (C) 2018 Michael "Kantenkugel" Ritter
- *   For modified parts of the example code (http challange file creation)
+ *   For modified parts of the example code
+ *   (http challange file creation, user confirmation code)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,22 +16,20 @@
 
 package com.kantenkugel.acmeclient;
 
+import com.kantenkugel.acmeclient.config.SiteConfig;
 import org.shredzone.acme4j.Authorization;
 import org.shredzone.acme4j.Status;
 import org.shredzone.acme4j.challenge.Http01Challenge;
 import org.shredzone.acme4j.exception.AcmeException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import javax.swing.*;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.URI;
+import java.util.Scanner;
+
+import static com.kantenkugel.acmeclient.AcmeClient.LOG;
 
 class Utils {
-    private static final Logger LOG = LoggerFactory.getLogger(Utils.class);
-
     private static final String CHALLANGE_DIR = "./.well-known/acme-challenge/";
 
     /**
@@ -76,6 +75,8 @@ class Utils {
         // Now trigger the challenge.
         challenge.trigger();
 
+        LOG.info("Waiting for challenge confirmation");
+
         // Poll for the challenge to complete.
         try {
             int attempts = 10;
@@ -108,20 +109,10 @@ class Utils {
         }
     }
 
-    /**
-     * Presents the user a link to the Terms of Service, and asks for confirmation. If the
-     * user denies confirmation, an exception is thrown.
-     *
-     * @param agreement
-     *            {@link URI} of the Terms of Service
-     */
-    static void acceptAgreement(URI agreement) throws AcmeException {
-        int option = JOptionPane.showConfirmDialog(null,
-                "Do you accept the Terms of Service?\n\n" + agreement,
-                "Accept ToS",
-                JOptionPane.YES_NO_OPTION);
-        if (option == JOptionPane.NO_OPTION) {
-            throw new AcmeException("User did not accept Terms of Service");
-        }
+    private static final Scanner sc = new Scanner(System.in);
+
+    static boolean userConfirmation(String text) throws AcmeException {
+        LOG.info(text + " [y/N]");
+        return sc.nextLine().equalsIgnoreCase("y");
     }
 }

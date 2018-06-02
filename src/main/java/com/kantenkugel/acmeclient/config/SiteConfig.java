@@ -14,25 +14,21 @@
  * limitations under the License.
  */
 
-package com.kantenkugel.acmeclient;
+package com.kantenkugel.acmeclient.config;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.io.File;
-import java.util.Date;
 
 public class SiteConfig {
     private String domain;
     private File staticsDir;
-    private Date expiry;
 
     @JsonCreator
-    public SiteConfig(@JsonProperty("domain") String domain, @JsonProperty("staticsDir") File staticsDir,
-                      @JsonProperty("expiry") Date expiry) {
+    public SiteConfig(@JsonProperty("domain") String domain, @JsonProperty("staticsDir") File staticsDir) {
         this.domain = domain;
         this.staticsDir = staticsDir;
-        this.expiry = expiry;
     }
 
     public String getDomain() {
@@ -41,9 +37,5 @@ public class SiteConfig {
 
     public File getStaticsDir() {
         return staticsDir;
-    }
-
-    public Date getExpiry() {
-        return expiry;
     }
 }

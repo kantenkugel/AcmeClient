@@ -2,10 +2,12 @@
 ### MainTemplate template
 ### Project specific
 logs/
+config.json
+*.key
+*.crt
+
+## Legacy
 sites.json
-domain.key
-user.key
-domain-chain.crt
 
 ### IntelliJ project files
 .idea
