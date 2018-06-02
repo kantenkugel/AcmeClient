@@ -36,7 +36,7 @@ class Entities {
     private static final File USER_KEY_FILE = new File("caAccount.key");
 
     // RSA key size of generated key pairs
-    private static final int KEY_SIZE = 4096;
+    private static final int KEY_SIZE = 2048;
 
     static KeyPair loadOrCreateAccountKeyPair() throws IOException {
         KeyPair kp = loadAccountKeyPair();
